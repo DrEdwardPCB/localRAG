@@ -1,0 +1,410 @@
+{
+  "name": "eklab-chatbot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "eklab-chatbot",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -400,
+        -320
+      ],
+      "id": "ade749ae-d04a-4237-85d2-957865e0e1f9",
+      "name": "Webhook",
+      "webhookId": "1afe9b62-c521-47f6-8175-1bd20e9197a5"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $('Webhook').item.json.body.chat_message }}",
+        "options": {
+          "systemMessage": "={{ $('Webhook').item.json.body.system_prompt || `You are a customer service` }}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        272,
+        -320
+      ],
+      "id": "b36afee1-2717-410c-b706-0b4824b1d29e",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $('Webhook').item.json.body.session_id }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryRedisChat",
+      "typeVersion": 1.5,
+      "position": [
+        240,
+        -96
+      ],
+      "id": "0d81f119-733f-4c15-a449-d36bd2c2fdeb",
+      "name": "Redis Chat Memory",
+      "credentials": {
+        "redis": {
+          "id": "AyZtBg5YZaOtyaPA",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4.1-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        112,
+        -96
+      ],
+      "id": "d4117c0a-ba3b-499b-967b-200b73c52fe2",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "B3kN1v1cXyyY0yhI",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        864,
+        -320
+      ],
+      "id": "92925287-5ed2-4c04-b541-78c70a1de9e1",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Query data with the Weaviate cluster, it will response the top 4 related facts of your query",
+        "weaviateCollection": {
+          "__rl": true,
+          "value": "={{ $('Webhook').item.json.body.weaviate_collection_id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreWeaviate",
+      "typeVersion": 1.3,
+      "position": [
+        368,
+        -96
+      ],
+      "id": "6445bfc2-1129-48ba-b842-ebf09dc3396b",
+      "name": "Weaviate Vector Store",
+      "credentials": {
+        "weaviateApi": {
+          "id": "imvQdMc9OeFwBbB2",
+          "name": "Weaviate Credentials account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        448,
+        112
+      ],
+      "id": "12abc979-7c2a-40d6-9250-1e95a9bb101b",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "B3kN1v1cXyyY0yhI",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "schemas",
+          "mode": "list",
+          "cachedResultName": "schemas"
+        },
+        "where": {
+          "values": [
+            {
+              "column": "id",
+              "value": "={{ $('Webhook').item.json.body.schema_id }}"
+            },
+            {
+              "column": "user_id",
+              "value": "={{ $('Webhook').item.json.body.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        656,
+        -96
+      ],
+      "id": "a903880e-d8a0-4456-8e4d-213be46a2d6c",
+      "name": "Select rows from a table in Postgres",
+      "credentials": {
+        "postgres": {
+          "id": "VFBhphiPh06xbtct",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "load",
+        "weaviateCollection": {
+          "__rl": true,
+          "value": "={{ $json.body.weaviate_collection_id }}",
+          "mode": "id"
+        },
+        "prompt": "={{ $json.body.chat_message }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreWeaviate",
+      "typeVersion": 1.3,
+      "position": [
+        -464,
+        -128
+      ],
+      "id": "9d00b08b-c68e-445c-ac36-56dfd1887393",
+      "name": "Weaviate Vector Store1",
+      "credentials": {
+        "weaviateApi": {
+          "id": "imvQdMc9OeFwBbB2",
+          "name": "Weaviate Credentials account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "select",
+        "schema": {
+          "__rl": true,
+          "value": "public",
+          "mode": "list",
+          "cachedResultName": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "schemas",
+          "mode": "list",
+          "cachedResultName": "schemas"
+        },
+        "where": {
+          "values": [
+            {
+              "column": "id",
+              "value": "={{ $json.body.schema_id }}"
+            },
+            {
+              "column": "user_id",
+              "value": "={{ $json.body.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -112,
+        -320
+      ],
+      "id": "58f7833e-e004-44e3-8aae-85c6fa290291",
+      "name": "Select rows from a table",
+      "credentials": {
+        "postgres": {
+          "id": "VFBhphiPh06xbtct",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "host": "n8n.eklab.xyz",
+            "user-agent": "PostmanRuntime/7.51.0",
+            "content-length": "225",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "accept-language": "*",
+            "cdn-loop": "cloudflare; loops=1",
+            "cf-connecting-ip": "15.156.147.236",
+            "cf-ipcountry": "CA",
+            "cf-ray": "9c5c0ae95e8f39f9-YYZ",
+            "cf-visitor": "{\"scheme\":\"https\"}",
+            "content-type": "application/json",
+            "sec-fetch-mode": "cors",
+            "x-forwarded-for": "172.69.214.16",
+            "x-forwarded-host": "n8n.eklab.xyz",
+            "x-forwarded-port": "443",
+            "x-forwarded-proto": "https",
+            "x-forwarded-server": "85bc62e2aafa",
+            "x-real-ip": "172.69.214.16"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "user_id": "40e5e13c-393f-4c31-9231-8861a3be5bf0",
+            "endpoint_id": "71782726-7401-4b0c-989d-494c17917b06",
+            "schema_id": "971b5839-023e-4c4b-ad10-daef056df545",
+            "weaviate_collection_id": "Schema_971b5839_023e_4c4b_ad10_daef056df545",
+            "session_id": "asdasdfgfgh",
+            "chat_message": "tell me about the company you serve"
+          },
+          "webhookUrl": "https://n8n.eklab.xyz/webhook/eklab-chatbot",
+          "executionMode": "production"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Select rows from a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Redis Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Weaviate Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          },
+          {
+            "node": "Weaviate Vector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weaviate Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select rows from a table in Postgres": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weaviate Vector Store1": {
+      "main": [
+        []
+      ]
+    },
+    "Select rows from a table": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "60f968eb-fc78-428a-abc1-dffec7eac782",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "8db90a53deb80842662d3387b648240ddb9fed5608e8664389c2d2742164a186"
+  },
+  "id": "zs1q2Bi8g7RvhB3NgdXCf",
+  "tags": []
+}

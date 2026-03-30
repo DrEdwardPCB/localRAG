@@ -1,0 +1,17 @@
+{
+  "name": "local-rag",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @local-rag/api",
+    "dev:web": "npm run dev -w @local-rag/web",
+    "build": "npm run build -w @local-rag/api && npm run build -w @local-rag/web",
+    "test": "npm run test -w @local-rag/api",
+    "test:unit": "npm run test -w @local-rag/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

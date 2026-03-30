@@ -1,0 +1,59 @@
+services:
+  mongo:
+    image: mongodb/mongodb-atlas-local:8.0
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      INFERENCE_ENDPOINT: ${INFERENCE_ENDPOINT:-https://models.github.ai/inference}
+      CHAT_MODEL: ${CHAT_MODEL:-openai/o4-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      MONGODB_URI: mongodb://mongo:27017/?directConnection=true
+      MONGODB_DB: ${MONGODB_DB:-localrag}
+      REDIS_URL: redis://redis:6379
+      API_PORT: "3002"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3002}
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3002}
+    depends_on:
+      - api
+
+networks:
+  default:
+    name: local-rag-net

@@ -9,7 +9,9 @@
     "dev:web": "npm run dev -w @local-rag/web",
     "build": "npm run build -w @local-rag/api && npm run build -w @local-rag/web",
     "test": "npm run test -w @local-rag/api",
-    "test:unit": "npm run test -w @local-rag/api"
+    "test:unit": "npm run test -w @local-rag/api",
+    "create-index": "npm run create-index -w @local-rag/api",
+    "create-search-index": "npm run create-search-index -w @local-rag/api"
   },
   "engines": {
     "node": ">=20"

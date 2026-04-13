@@ -8,6 +8,12 @@ import {
 import type { KnowledgeRepository } from "../mongo/knowledgeRepository.js";
 import type { RedisChatHistoryStore } from "../redis/chatHistory.js";
 
+export type VectorHit = {
+  text: string;
+  score: number;
+  knowledgeSourceId: string;
+};
+
 export type ChatBody = {
   chat_message: string;
   session_id: string;
@@ -18,38 +24,55 @@ export type ChatBody = {
   knowledge_source_id?: string;
   /** Legacy / n8n-style alias */
   weaviate_collection_id?: string;
+  /**
+   * When true: run embedding + vector search only (no LLM, no Redis read/write for history).
+   * Use to validate retrieval.
+   */
+  vector_search_only?: boolean;
 };
 
 type ChainState = {
   body: ChatBody;
   history: { role: "user" | "assistant"; content: string }[];
+  hits: VectorHit[];
   contextText: string;
   schemaText: string | null;
   answer: string;
 };
+
+export async function loadRetrievalState(
+  repo: KnowledgeRepository,
+  historyStore: RedisChatHistoryStore,
+  body: ChatBody,
+  options: { loadHistory: boolean },
+): Promise<ChainState> {
+  const cfg = getConfig();
+  const history = options.loadHistory
+    ? await historyStore.load(body.session_id, cfg.CHAT_HISTORY_MAX_MESSAGES)
+    : [];
+  const [qEmb] = await embedTexts([body.chat_message]);
+  const sourceScope =
+    body.knowledge_source_id ?? body.weaviate_collection_id ?? undefined;
+  const hits = await repo.vectorSearch({
+    embedding: qEmb,
+    userId: body.user_id,
+    knowledgeSourceId: sourceScope,
+    limit: 4,
+  });
+  const contextText = hits.map((h) => h.text).join("\n\n---\n\n");
+  let schemaText: string | null = null;
+  if (body.schema_id) {
+    schemaText = await repo.getSchemaMetadata(body.schema_id, body.user_id);
+  }
+  return { body, history, hits, contextText, schemaText, answer: "" };
+}
 
 export function buildChatChain(
   repo: KnowledgeRepository,
   historyStore: RedisChatHistoryStore,
 ) {
   const loadContext = RunnableLambda.from(async (body: ChatBody): Promise<ChainState> => {
-    const cfg = getConfig();
-    const history = await historyStore.load(body.session_id, cfg.CHAT_HISTORY_MAX_MESSAGES);
-    const [qEmb] = await embedTexts([body.chat_message]);
-    const sourceScope =
-      body.knowledge_source_id ?? body.weaviate_collection_id ?? undefined;
-    const hits = await repo.vectorSearch({
-      embedding: qEmb,
-      userId: body.user_id,
-      knowledgeSourceId: sourceScope,
-      limit: 4,
-    });
-    const contextText = hits.map((h) => h.text).join("\n\n---\n\n");
-    let schemaText: string | null = null;
-    if (body.schema_id) {
-      schemaText = await repo.getSchemaMetadata(body.schema_id, body.user_id);
-    }
-    return { body, history, contextText, schemaText, answer: "" };
+    return loadRetrievalState(repo, historyStore, body, { loadHistory: true });
   });
 
   const generate = RunnableLambda.from(async (state: ChainState): Promise<ChainState> => {
@@ -84,11 +107,33 @@ function bodySystem(body: ChatBody, fallback: string): string {
   return (body.system_prompt && body.system_prompt.trim()) || fallback;
 }
 
+export type ChatResponse =
+  | { mode: "chat"; reply: string }
+  | {
+      mode: "vector_search_only";
+      hits: VectorHit[];
+      contextText: string;
+      schemaText: string | null;
+    };
+
 export async function runChat(
   chain: ReturnType<typeof buildChatChain>,
+  repo: KnowledgeRepository,
   historyStore: RedisChatHistoryStore,
   body: ChatBody,
-): Promise<{ reply: string }> {
+): Promise<ChatResponse> {
+  if (body.vector_search_only) {
+    const state = await loadRetrievalState(repo, historyStore, body, {
+      loadHistory: false,
+    });
+    return {
+      mode: "vector_search_only",
+      hits: state.hits,
+      contextText: state.contextText,
+      schemaText: state.schemaText,
+    };
+  }
+
   const cfg = getConfig();
   const state = await chain.invoke(body);
   await historyStore.append(
@@ -101,5 +146,5 @@ export async function runChat(
     { role: "assistant", content: state.answer },
     cfg.CHAT_HISTORY_MAX_MESSAGES,
   );
-  return { reply: state.answer };
+  return { mode: "chat", reply: state.answer };
 }

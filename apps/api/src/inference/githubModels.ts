@@ -33,13 +33,16 @@ export async function embedTexts(inputs: string[]): Promise<number[][]> {
 export async function chatComplete(messages: ChatMessage[]): Promise<string> {
   const cfg = getConfig();
   const client = getClient();
-  const response = await client.path("/chat/completions").post({
+  
+  const payload ={
     body: {
       model: cfg.CHAT_MODEL,
       messages,
     },
-  });
-
+  }
+  console.log("chatComplete payload", payload);
+  const response = await client.path("/chat/completions").post(payload);
+  console.log("chatComplete response", response);
   if (isUnexpected(response)) {
     const err = (response.body as { error?: { message?: string } })?.error;
     throw new Error(err?.message ?? "Chat completion failed");

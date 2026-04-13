@@ -5,6 +5,9 @@ loadEnv();
 
 const envSchema = z.object({
   GITHUB_TOKEN: z.string().min(1).optional(),
+  LOG_LEVEL: z
+    .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
+    .default("info"),
   INFERENCE_ENDPOINT: z.string().url().default("https://models.github.ai/inference"),
   CHAT_MODEL: z.string().default("openai/o4-mini"),
   EMBEDDING_MODEL: z.string().default("openai/text-embedding-3-small"),

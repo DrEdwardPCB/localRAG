@@ -17,10 +17,16 @@ export type AppDeps = {
 };
 
 export async function createApp(deps: AppDeps) {
-  const app = Fastify({ logger: true });
+  const cfg = getConfig();
+  const app = Fastify({ logger: { level: cfg.LOG_LEVEL } });
   await app.register(cors, { origin: true });
 
   const chain = buildChatChain(deps.repo, deps.history);
+
+  app.setErrorHandler(async (err, req, reply) => {
+    req.log.error({ err }, "unhandled_error");
+    return sendMappedError(reply, err);
+  });
 
   app.get("/health", async () => ({ ok: true }));
 
@@ -46,6 +52,7 @@ export async function createApp(deps: AppDeps) {
       });
       return reply.send(res);
     } catch (e) {
+      req.log.error({ err: e }, "knowledge_ingest_failed");
       return sendMappedError(reply, e);
     }
   });
@@ -85,7 +92,7 @@ export async function createApp(deps: AppDeps) {
       return reply.status(400).send({ error: "user_id is required" });
     }
     try {
-      const res = await runChat(chain, deps.history, {
+      const res = await runChat(chain, deps.repo, deps.history, {
         chat_message,
         session_id,
         system_prompt:
@@ -100,9 +107,18 @@ export async function createApp(deps: AppDeps) {
           typeof body.weaviate_collection_id === "string"
             ? body.weaviate_collection_id
             : undefined,
+        vector_search_only: body.vector_search_only === true,
       });
       return reply.send(res);
     } catch (e) {
+      req.log.error(
+        {
+          err: e,
+          session_id,
+          user_id,
+        },
+        "chat_failed",
+      );
       return sendMappedError(reply, e);
     }
   });

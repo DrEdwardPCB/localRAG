@@ -82,11 +82,51 @@ export class KnowledgeRepository {
     knowledgeSourceId?: string;
     limit: number;
   }): Promise<{ text: string; score: number; knowledgeSourceId: string }[]> {
+    const col = this.chunks();
     const filter: Record<string, unknown> = { userId: params.userId };
     if (params.knowledgeSourceId) {
       filter.knowledgeSourceId = params.knowledgeSourceId;
     }
-
+    const vectorSearchDebug = true;
+    if (vectorSearchDebug) {
+      try {
+        const indexes = await col.listSearchIndexes().toArray();
+        console.log(
+          "[vectorSearch debug] 1. listSearchIndexes → look for status READY, type vectorSearch:",
+          JSON.stringify(indexes, null, 2),
+        );
+      } catch (e) {
+        console.log("[vectorSearch debug] 1. listSearchIndexes failed:", e);
+      }
+      console.log(
+        "[vectorSearch debug] 2. index name used (must match Atlas):",
+        this.vectorIndexName,
+      );
+      const sampleDoc =
+        (await col.findOne({ userId: params.userId })) ?? (await col.findOne({}));
+      console.log(
+        "[vectorSearch debug] 3. stored embedding length (sample doc):",
+        sampleDoc?.embedding?.length ?? "(no document)",
+      );
+      console.log("[vectorSearch debug] 3. query embedding length:", params.embedding.length);
+      console.log(
+        "[vectorSearch debug] 4. db:",
+        this.db.databaseName,
+        "collection:",
+        col.collectionName,
+      );
+      const emb = params.embedding;
+      console.log("[vectorSearch debug] 5. query vector is array:", Array.isArray(emb));
+      console.log(
+        "[vectorSearch debug] 5. query vector first elem type:",
+        emb.length ? typeof emb[0] : "(empty)",
+      );
+      console.log(
+        "[vectorSearch debug] 5. query vector any nullish:",
+        emb.some((x) => x == null),
+      );
+      console.log("[vectorSearch debug] filter used in $vectorSearch:", filter);
+    }
     const pipeline = [
       {
         $vectorSearch: {
@@ -106,8 +146,10 @@ export class KnowledgeRepository {
         },
       },
     ];
-
-    const rows = await this.chunks().aggregate(pipeline).toArray();
+    const rows = await col.aggregate(pipeline).toArray();
+    if (vectorSearchDebug) {
+      console.log("[vectorSearch debug] aggregate result count:", rows.length);
+    }
     return rows.map((r) => ({
       text: String(r.text),
       score: Number(r.score ?? 0),

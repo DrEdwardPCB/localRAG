@@ -45,6 +45,8 @@ export default function HomePage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** When true: API runs embedding + $vectorSearch only; no LLM; Redis chat history is not read or written. */
+  const [vectorSearchOnly, setVectorSearchOnly] = useState(false);
 
   useEffect(() => {
     setUserId(readOrCreateUserId());
@@ -86,13 +88,51 @@ export default function HomePage() {
           chat_message: userText,
           session_id: sessionId,
           user_id: userId,
+          vector_search_only: vectorSearchOnly,
         }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as
+        | { mode: "chat"; reply: string }
+        | {
+            mode: "vector_search_only";
+            hits: { text: string; score: number; knowledgeSourceId: string }[];
+            contextText: string;
+            schemaText: string | null;
+          }
+        | { error?: string };
       if (!res.ok) {
-        throw new Error(data?.error ?? res.statusText);
+        throw new Error(
+          "error" in data && typeof data.error === "string"
+            ? data.error
+            : res.statusText,
+        );
       }
-      setMessages((m) => [...m, { role: "assistant", text: data.reply }]);
+      if ("mode" in data && data.mode === "vector_search_only") {
+        const lines = [
+          `[Vector search only — ${data.hits.length} hit(s). LLM skipped; Redis not updated.]`,
+        ];
+        if (data.hits.length === 0) {
+          lines.push(
+            "(No chunks returned — check vector index, MONGODB_DB, user_id on chunks vs chat, and embedding model.)",
+          );
+        } else {
+          data.hits.forEach((h, i) => {
+            const preview =
+              h.text.length > 800 ? `${h.text.slice(0, 800)}…` : h.text;
+            lines.push(
+              `#${i + 1} score=${h.score.toFixed(4)} source=${h.knowledgeSourceId}\n${preview}`,
+            );
+          });
+        }
+        setMessages((m) => [...m, { role: "assistant", text: lines.join("\n\n") }]);
+      } else if ("mode" in data && data.mode === "chat" && "reply" in data) {
+        setMessages((m) => [...m, { role: "assistant", text: data.reply }]);
+      } else {
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", text: JSON.stringify(data, null, 2) },
+        ]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chat failed");
     } finally {
@@ -163,6 +203,25 @@ export default function HomePage() {
         <p style={{ opacity: 0.7, fontSize: 12 }}>
           User id: {userId} · Session: {sessionId || "…"}
         </p>
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 13,
+            marginBottom: 8,
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={vectorSearchOnly}
+            onChange={(e) => setVectorSearchOnly(e.target.checked)}
+          />
+          <span>
+            Vector search only (debug) — no LLM, no Redis history read/write
+          </span>
+        </label>
         {error && (
           <div style={{ color: "#f28b82", marginBottom: 8 }} role="alert">
             {error}

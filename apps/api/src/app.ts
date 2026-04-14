@@ -57,6 +57,11 @@ export async function createApp(deps: AppDeps) {
     }
   });
 
+  app.get("/knowledge/users", async (_req, reply) => {
+    const user_ids = await deps.repo.listDistinctUserIds();
+    return reply.send({ user_ids });
+  });
+
   app.get("/knowledge/sources", async (req, reply) => {
     const q = req.query as { user_id?: string };
     if (!q.user_id) {

@@ -33,7 +33,9 @@ type Source = { id: string; title?: string; createdAt: string; schemaId?: string
 
 export default function HomePage() {
   const [userId, setUserId] = useState("");
+  const [knownUserIds, setKnownUserIds] = useState<string[]>([]);
   const [sessionId, setSessionId] = useState("");
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [messages, setMessages] = useState<{ role: "user" | "assistant"; text: string }[]>(
     [],
   );
@@ -45,15 +47,67 @@ export default function HomePage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastIngestInfo, setLastIngestInfo] = useState<string | null>(null);
   /** When true: API runs embedding + $vectorSearch only; no LLM; Redis chat history is not read or written. */
   const [vectorSearchOnly, setVectorSearchOnly] = useState(false);
 
+  const base = useMemo(() => apiBase(), []);
+
   useEffect(() => {
-    setUserId(readOrCreateUserId());
     setSessionId(readOrCreateSessionId());
   }, []);
 
-  const base = useMemo(() => apiBase(), []);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const ur = await fetch(`${base}/knowledge/users`);
+        const ud = (await ur.json()) as { user_ids?: string[] };
+        if (cancelled) return;
+        const fromDb = Array.isArray(ud.user_ids) ? ud.user_ids : [];
+        setKnownUserIds(fromDb);
+        const stored =
+          typeof sessionStorage !== "undefined"
+            ? sessionStorage.getItem(USER_ID_KEY)
+            : null;
+        let chosen: string;
+        if (fromDb.length > 0) {
+          chosen = stored && fromDb.includes(stored) ? stored : fromDb[0]!;
+          sessionStorage.setItem(USER_ID_KEY, chosen);
+        } else {
+          chosen =
+            stored && stored.length > 0 ? stored : crypto.randomUUID();
+          sessionStorage.setItem(USER_ID_KEY, chosen);
+        }
+        setUserId(chosen);
+      } catch {
+        if (!cancelled) {
+          setKnownUserIds([]);
+          setUserId(readOrCreateUserId());
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [base]);
+
+  const userIdsForSelect = useMemo(() => {
+    const set = new Set(knownUserIds);
+    if (userId) set.add(userId);
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [knownUserIds, userId]);
+
+  const refreshKnownUsers = useCallback(async () => {
+    try {
+      const ur = await fetch(`${base}/knowledge/users`);
+      if (!ur.ok) return;
+      const ud = (await ur.json()) as { user_ids?: string[] };
+      setKnownUserIds(Array.isArray(ud.user_ids) ? ud.user_ids : []);
+    } catch {
+      /* ignore */
+    }
+  }, [base]);
 
   const refreshSources = useCallback(async () => {
     if (!userId) return;
@@ -66,7 +120,13 @@ export default function HomePage() {
       return;
     }
     const data = (await res.json()) as { sources: Source[] };
-    setSources(data.sources);
+    const list = data.sources;
+    setSources(list);
+    setSelectedSourceId((prev) => {
+      const ids = list.map((s) => s.id);
+      if (prev && ids.includes(prev)) return prev;
+      return ids[0] ?? null;
+    });
   }, [base, userId]);
 
   useEffect(() => {
@@ -81,15 +141,19 @@ export default function HomePage() {
     setInput("");
     setMessages((m) => [...m, { role: "user", text: userText }]);
     try {
+      const body: Record<string, unknown> = {
+        chat_message: userText,
+        session_id: sessionId,
+        user_id: userId,
+        vector_search_only: vectorSearchOnly,
+      };
+      if (selectedSourceId) {
+        body.knowledge_source_id = selectedSourceId;
+      }
       const res = await fetch(`${base}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_message: userText,
-          session_id: sessionId,
-          user_id: userId,
-          vector_search_only: vectorSearchOnly,
-        }),
+        body: JSON.stringify(body),
       });
       const data = (await res.json()) as
         | { mode: "chat"; reply: string }
@@ -144,6 +208,7 @@ export default function HomePage() {
     if (!htmlPaste.trim() || !userId) return;
     setIngestBusy(true);
     setError(null);
+    setLastIngestInfo(null);
     try {
       const res = await fetch(`${base}/knowledge/ingest`, {
         method: "POST",
@@ -154,11 +219,22 @@ export default function HomePage() {
           title: title || undefined,
         }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as {
+        error?: string;
+        sourceId?: string;
+        chunkCount?: number;
+      };
       if (!res.ok) throw new Error(data?.error ?? res.statusText);
       setHtmlPaste("");
       setTitle("");
+      if (typeof data.chunkCount === "number" && data.sourceId) {
+        setLastIngestInfo(
+          `Uploaded ${data.chunkCount} chunk(s). Active source set to this document.`,
+        );
+      }
+      await refreshKnownUsers();
       await refreshSources();
+      if (data.sourceId) setSelectedSourceId(data.sourceId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Ingest failed");
     } finally {
@@ -186,6 +262,17 @@ export default function HomePage() {
     setMessages([]);
   };
 
+  const onUserChange = (next: string) => {
+    sessionStorage.setItem(USER_ID_KEY, next);
+    setUserId(next);
+  };
+
+  const newWorkspace = () => {
+    const id = crypto.randomUUID();
+    sessionStorage.setItem(USER_ID_KEY, id);
+    setUserId(id);
+  };
+
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
       <main style={{ flex: 1, display: "flex", flexDirection: "column", padding: 16 }}>
@@ -201,7 +288,13 @@ export default function HomePage() {
           </div>
         </header>
         <p style={{ opacity: 0.7, fontSize: 12 }}>
-          User id: {userId} · Session: {sessionId || "…"}
+          Session: {sessionId || "…"}
+          {selectedSourceId && (
+            <span>
+              {" "}
+              · RAG source: {sources.find((s) => s.id === selectedSourceId)?.title || selectedSourceId.slice(0, 12)}
+            </span>
+          )}
         </p>
         <label
           style={{
@@ -239,7 +332,9 @@ export default function HomePage() {
           }}
         >
           {messages.length === 0 && (
-            <p style={{ opacity: 0.6 }}>Send a message to start. Ingest HTML from the side panel for grounded answers.</p>
+            <p style={{ opacity: 0.6 }}>
+              Send a message to start. Ingest HTML from the side panel for grounded answers.
+            </p>
           )}
           {messages.map((m, i) => (
             <div key={i} style={{ marginBottom: 12 }}>
@@ -250,7 +345,14 @@ export default function HomePage() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <input
-            style={{ flex: 1, padding: 10, borderRadius: 6, border: "1px solid #30343c", background: "#16191f", color: "#e8eaed" }}
+            style={{
+              flex: 1,
+              padding: 10,
+              borderRadius: 6,
+              border: "1px solid #30343c",
+              background: "#16191f",
+              color: "#e8eaed",
+            }}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Message…"
@@ -272,9 +374,78 @@ export default function HomePage() {
           }}
         >
           <h2 style={{ marginTop: 0, fontSize: "1rem" }}>Knowledge</h2>
+          <label style={{ display: "block", fontSize: 12, marginBottom: 4 }}>User</label>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+            {userId ? (
+              <select
+                style={{
+                  flex: 1,
+                  padding: 8,
+                  borderRadius: 6,
+                  border: "1px solid #30343c",
+                  background: "#16191f",
+                  color: "#e8eaed",
+                }}
+                value={userId}
+                onChange={(e) => onUserChange(e.target.value)}
+              >
+                {userIdsForSelect.map((id) => (
+                  <option key={id} value={id}>
+                    {id.length > 40 ? `${id.slice(0, 37)}…` : id}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span style={{ flex: 1, fontSize: 12, opacity: 0.7 }}>Loading user…</span>
+            )}
+            <button type="button" onClick={newWorkspace} disabled={!userId}>
+              New user
+            </button>
+          </div>
+          {sources.length > 0 && (
+            <>
+              <label style={{ display: "block", fontSize: 12, marginBottom: 4 }}>
+                Active source (chat RAG scope)
+              </label>
+              <select
+                style={{
+                  width: "100%",
+                  marginBottom: 12,
+                  padding: 8,
+                  borderRadius: 6,
+                  border: "1px solid #30343c",
+                  background: "#16191f",
+                  color: "#e8eaed",
+                }}
+                value={selectedSourceId ?? ""}
+                onChange={(e) =>
+                  setSelectedSourceId(e.target.value ? e.target.value : null)
+                }
+              >
+                {sources.map((s) => {
+                  const label = s.title || s.id;
+                  const short =
+                    label.length > 48 ? `${label.slice(0, 45)}…` : label;
+                  return (
+                    <option key={s.id} value={s.id}>
+                      {short}
+                    </option>
+                  );
+                })}
+              </select>
+            </>
+          )}
           <label style={{ display: "block", fontSize: 12, marginBottom: 4 }}>Title (optional)</label>
           <input
-            style={{ width: "100%", marginBottom: 8, padding: 8, borderRadius: 6, border: "1px solid #30343c", background: "#16191f", color: "#e8eaed" }}
+            style={{
+              width: "100%",
+              marginBottom: 8,
+              padding: 8,
+              borderRadius: 6,
+              border: "1px solid #30343c",
+              background: "#16191f",
+              color: "#e8eaed",
+            }}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
@@ -297,6 +468,9 @@ export default function HomePage() {
           <button type="button" disabled={ingestBusy} onClick={() => void ingest()}>
             {ingestBusy ? "Uploading…" : "Upload"}
           </button>
+          {lastIngestInfo && (
+            <p style={{ fontSize: 12, opacity: 0.85, marginTop: 8 }}>{lastIngestInfo}</p>
+          )}
           <h3 style={{ fontSize: "0.9rem", marginTop: 20 }}>Sources</h3>
           <ul style={{ paddingLeft: 16 }}>
             {sources.map((s) => (

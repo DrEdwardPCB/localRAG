@@ -10,7 +10,7 @@ function getClient() {
   return ModelClient(cfg.INFERENCE_ENDPOINT, new AzureKeyCredential(token));
 }
 
-export async function embedTexts(inputs: string[]): Promise<number[][]> {
+async function embedTextsSingleRequest(inputs: string[]): Promise<number[][]> {
   const cfg = getConfig();
   const client = getClient();
   const response = await client.path("/embeddings").post({
@@ -27,7 +27,26 @@ export async function embedTexts(inputs: string[]): Promise<number[][]> {
 
   const data = (response.body as { data?: { embedding: number[]; index: number }[] }).data;
   if (!data?.length) throw new Error("Embeddings response missing data");
-  return data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+  const sorted = data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
+  if (sorted.length !== inputs.length) {
+    throw new Error("Embeddings response count mismatch");
+  }
+  return sorted;
+}
+
+export async function embedTexts(inputs: string[]): Promise<number[][]> {
+  if (inputs.length === 0) return [];
+  const { EMBEDDING_INPUT_BATCH_MAX } = getConfig();
+  const out: number[][] = [];
+  for (let i = 0; i < inputs.length; i += EMBEDDING_INPUT_BATCH_MAX) {
+    const slice = inputs.slice(i, i + EMBEDDING_INPUT_BATCH_MAX);
+    const batch = await embedTextsSingleRequest(slice);
+    out.push(...batch);
+  }
+  if (out.length !== inputs.length) {
+    throw new Error("Embedding count mismatch");
+  }
+  return out;
 }
 
 export async function chatComplete(messages: ChatMessage[]): Promise<string> {

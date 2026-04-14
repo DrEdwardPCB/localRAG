@@ -22,6 +22,8 @@ const envSchema = z.object({
   CHAT_HISTORY_MAX_MESSAGES: z.coerce.number().default(20),
   VECTOR_INDEX_NAME: z.string().default("vector_index"),
   EMBEDDING_DIMENSIONS: z.coerce.number().default(1536),
+  /** Max strings per embeddings API request (GitHub Models caps batch size). */
+  EMBEDDING_INPUT_BATCH_MAX: z.coerce.number().default(2048),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
@@ -36,6 +38,11 @@ export function getConfig(): AppConfig {
   }
   cached = parsed.data;
   return cached;
+}
+
+/** Clears parsed config so the next `getConfig()` re-reads `process.env` (tests). */
+export function resetConfigCache(): void {
+  cached = null;
 }
 
 export function requireGithubToken(): string {

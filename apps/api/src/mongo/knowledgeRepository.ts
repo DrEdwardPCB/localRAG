@@ -52,6 +52,14 @@ export class KnowledgeRepository {
     await this.chunks().insertMany(docs);
   }
 
+  /** Distinct `userId` values that have at least one knowledge source. */
+  async listDistinctUserIds(): Promise<string[]> {
+    const raw = await this.sources().distinct("userId");
+    return (raw as unknown[])
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+      .sort((a, b) => a.localeCompare(b));
+  }
+
   async listSources(userId: string): Promise<
     { id: string; title?: string; createdAt: Date; schemaId?: string }[]
   > {

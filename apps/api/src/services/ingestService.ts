@@ -59,6 +59,15 @@ export async function ingestHtml(
     embedding: embeddings[i]!,
   }));
 
-  await repo.insertChunks(chunkDocs);
+  try {
+    await repo.insertChunks(chunkDocs);
+  } catch (e) {
+    try {
+      await repo.deleteSource(sid, input.userId);
+    } catch {
+      /* best-effort rollback */
+    }
+    throw e;
+  }
   return { sourceId: sid, chunkCount: pieces.length };
 }

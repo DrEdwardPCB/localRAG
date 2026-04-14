@@ -44,4 +44,20 @@ describe("ingestHtml", () => {
     const chunks = insertChunks.mock.calls[0]![0] as { embedding: number[] }[];
     expect(chunks[0]!.embedding).toEqual([0, 0, 0]);
   });
+
+  it("deletes source when insertChunks fails", async () => {
+    embedTexts.mockImplementation(async (texts: string[]) =>
+      texts.map(() => [0, 0, 0]),
+    );
+    const { ingestHtml } = await import("./ingestService.js");
+    const oid = new ObjectId();
+    const insertSource = vi.fn().mockResolvedValue(oid);
+    const insertChunks = vi.fn().mockRejectedValue(new Error("mongo write failed"));
+    const deleteSource = vi.fn().mockResolvedValue(true);
+    const repo = { insertSource, insertChunks, deleteSource } as never;
+    await expect(
+      ingestHtml(repo, { html: SAMPLE_HTML_WITH_SCRIPT, userId: "u1" }),
+    ).rejects.toThrow("mongo write failed");
+    expect(deleteSource).toHaveBeenCalledWith(oid.toHexString(), "u1");
+  });
 });
